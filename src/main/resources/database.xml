@@ -1,0 +1,119 @@
+<?xml version="1.0" encoding="utf-8"?>
+<databaseChangeLog
+        xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+        xmlns:ext="http://www.liquibase.org/xml/ns/dbchangelog-ext"
+        xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+        xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-3.6.xsd
+                        http://www.liquibase.org/xml/ns/dbchangelog-ext http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-ext.xsd"
+        logicalFilePath="src/main/resources/database.xml"
+>
+
+    <property name="uuid_function" value="uuid_generate_v4()" dbms="postgresql"/>
+    <property name="uuid_function" value="random_uuid()" dbms="h2"/>
+
+    <changeSet author="swachter" id="1">
+
+        <createTable tableName="movie">
+            <column name="id" type="uuid" defaultValueComputed="${uuid_function}">
+                <constraints primaryKey="true" nullable="false" unique="true"/>
+            </column>
+            <column name="name" type="varchar">
+                <constraints nullable="false" primaryKey="true" unique="true"/>
+            </column>
+            <column name="director_id" type="uuid">
+                <constraints nullable="false"/>
+            </column>
+            <column name="year" type="integer">
+                <constraints nullable="false"/>
+            </column>
+            <column name="genre_id" type="uuid">
+                <constraints nullable="false"/>
+            </column>
+        </createTable>
+
+        <createTable tableName="director">
+            <column name="id" type="uuid" defaultValueComputed="${uuid_function}">
+                <constraints primaryKey="true" nullable="false" unique="true"/>
+            </column>
+            <column name="name" type="varchar">
+                <constraints nullable="false" primaryKey="true" unique="true"/>
+            </column>
+        </createTable>
+
+        <addForeignKeyConstraint baseColumnNames="director_id"
+                                 baseTableName="movie"
+                                 constraintName="fk_movie_director"
+                                 referencedColumnNames="id"
+                                 referencedTableName="director"
+        />
+
+        <createTable tableName="genre">
+            <column name="id" type="uuid" defaultValueComputed="${uuid_function}">
+                <constraints primaryKey="true" nullable="false" unique="true"/>
+            </column>
+            <column name="name" type="varchar">
+                <constraints nullable="false" primaryKey="true" unique="true"/>
+            </column>
+        </createTable>
+
+        <addForeignKeyConstraint baseColumnNames="genre_id"
+                                 baseTableName="movie"
+                                 constraintName="fk_movie_genre"
+                                 referencedColumnNames="id"
+                                 referencedTableName="genre"
+                                 />
+
+        <createTable tableName="actor">
+            <column name="id" type="uuid" defaultValueComputed="${uuid_function}">
+                <constraints primaryKey="true" nullable="false" unique="true"/>
+            </column>
+            <column name="name" type="varchar">
+                <constraints nullable="false" primaryKey="true" unique="true"/>
+            </column>
+        </createTable>
+
+        <createTable tableName="movie_actor">
+            <column name="movie_id" type="uuid">
+                <constraints nullable="false"/>
+            </column>
+            <column name="actor_id" type="uuid">
+                <constraints nullable="false"/>
+            </column>
+        </createTable>
+
+        <addForeignKeyConstraint baseColumnNames="movie_id"
+                                 baseTableName="movie_actor"
+                                 constraintName="fk_movie_actor_movie"
+                                 referencedColumnNames="id"
+                                 referencedTableName="movie"
+        />
+
+        <addForeignKeyConstraint baseColumnNames="actor_id"
+                                 baseTableName="movie_actor"
+                                 constraintName="fk_movie_actor_actor"
+                                 referencedColumnNames="id"
+                                 referencedTableName="actor"
+        />
+
+        <createTable tableName="pet">
+            <column name="id" type="uuid">
+                <constraints nullable="false"/>
+            </column>
+            <column name="name" type="varchar">
+                <constraints nullable="false" primaryKey="true" unique="true"/>
+            </column>
+            <column name="actor_id" type="uuid">
+                <constraints nullable="false"/>
+            </column>
+        </createTable>
+
+        <addForeignKeyConstraint baseColumnNames="actor_id"
+                                 baseTableName="pet"
+                                 constraintName="fk_pet_actor"
+                                 referencedColumnNames="id"
+                                 referencedTableName="actor"
+        />
+
+    </changeSet>
+
+</databaseChangeLog>
