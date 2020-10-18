@@ -14,7 +14,7 @@ import org.scalatest.funsuite.AnyFunSuite
 
 class EngineTest extends AnyFunSuite {
 
-  val h2DataSourcee = {
+  val h2DataSource = {
     val ds = new JdbcDataSource
     ds.setUrl("jdbc:h2:mem:db;DB_CLOSE_DELAY=-1")
     ds
@@ -34,7 +34,7 @@ class EngineTest extends AnyFunSuite {
     // setup database
     //
 
-    val conn = h2DataSourcee.getConnection
+    val conn = h2DataSource.getConnection
 
     val jdbcConn = new JdbcConnection(conn)
 
@@ -85,32 +85,30 @@ class EngineTest extends AnyFunSuite {
     val runtime = zio.Runtime.default
 
     // fails --  ValidationError Error: Field 'name' does not exist on type 'ListMovieView'.
-//    val qry =
-//      """
-//        | query {
-//        |  movies {
-//        |    name
-//        |  }
-//        |}
-//        |""".stripMargin
-
-    // succeeds
     val qry =
       """
-        |query {
-        |   directors {
-        |     name
-        |     movies {
-        |       name
-        |     }
-        |   }
+        | query {
+        |  movies {
+        |    name
+        |  }
         |}
         |""".stripMargin
 
+    // succeeds
+//    val qry =
+//      """
+//        |query {
+//        |   directors {
+//        |     name
+//        |     movies {
+//        |       name
+//        |     }
+//        |   }
+//        |}
+//        |""".stripMargin
 
-    val z = Engine.program2(h2DataSourcee, qry)
 
-    val result = runtime.unsafeRun(z)
+    val result = Engine.runQuery(h2DataSource, qry)
 
     println(result.toString)
 

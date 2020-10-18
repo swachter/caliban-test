@@ -8,7 +8,7 @@ import caliban.Value.StringValue
 import caliban.schema.{ArgBuilder, Schema, _}
 import caliban.{ResponseValue, RootResolver}
 import ct.sql.Tables._
-import javax.sql.DataSource
+import javax.sql.{DataSource => JDataSource}
 import org.jooq.impl.DSL
 import org.jooq.{Condition, DSLContext, Field, Table}
 import zio.blocking._
@@ -193,16 +193,16 @@ object Engine {
     for {
       ctx <- dslCtx
       res <- effectBlocking {
-        ctx
-          .select(ACTOR.asterisk())
-          .from(ACTOR)
-          .innerJoin(MOVIE_ACTOR)
-          .on(MOVIE_ACTOR.MOVIE_ID.eq(id))
-          .fetchInto(classOf[Actor])
-          .asScala
-          .map(new ActorView(_))
-          .toList
-      }
+              ctx
+                .select(ACTOR.asterisk())
+                .from(ACTOR)
+                .innerJoin(MOVIE_ACTOR)
+                .on(MOVIE_ACTOR.MOVIE_ID.eq(id))
+                .fetchInto(classOf[Actor])
+                .asScala
+                .map(new ActorView(_))
+                .toList
+            }
     } yield res
 
   val queries = Queries(
@@ -257,67 +257,33 @@ object Engine {
     }
   }
 
-  val acquireDslContext: ZIO[DataSrc, Throwable, DSLContext] = for {
-    dataSource <- ZIO.access[DataSrc](_.get)
-    connection <- ZIO.effect(dataSource.getConnection())
+  type DataSource = Has[JDataSource]
+
+  val acquireDslContext: ZIO[Blocking with DataSource, Throwable, DSLContext] = for {
+    dataSource <- ZIO.access[DataSource](_.get)
+    connection <- effectBlocking(dataSource.getConnection())
   } yield {
     DSL.using(connection)
   }
 
-  def releaseDslContext(dslCtx: DSLContext): ZIO[Any, Nothing, Any] = ZIO.effect(dslCtx.close()).orDie
+  def releaseDslContext(dslCtx: DSLContext): ZIO[Blocking, Nothing, Unit] = effectBlocking(dslCtx.close()).orDie
 
-  type DataSrc = Has[DataSource]
-  val dslCtxLayer: ZLayer[DataSrc, Throwable, DslCtx]   = ZLayer.fromAcquireRelease(acquireDslContext)(releaseDslContext)
-  val loadEnvLayer: ZLayer[DataSrc, Throwable, LoadEnv] = dslCtxLayer ++ Blocking.live
+  val managed: ZManaged[Blocking with DataSource, Throwable, DSLContext] = ZManaged.make(acquireDslContext)(releaseDslContext)
 
-  def program(ds: DataSource, qry: String): ZIO[Any, Throwable, ResponseValue] = {
-    val q                                           = query(qry)
-    val dsLayer: ULayer[DataSrc]                    = ZLayer.succeed(ds)
-    val queryLayer: ZLayer[Any, Throwable, LoadEnv] = dsLayer >>> loadEnvLayer
-    q.provideLayer(queryLayer)
-  }
-
-  def program2(ds: DataSource, qry: String): ZIO[Any, Throwable, ResponseValue] = {
-    val t = managed.use { dslCtx =>
-      val q           = query(qry)
-      val dslCtxLayer = ZLayer.succeed(dslCtx)
-      q.provideLayer(dslCtxLayer ++ Blocking.live)
-
+  def program(qry: String): ZIO[Blocking with DataSource, Throwable, ResponseValue] =
+    managed.use { dslCtx =>
+      query(qry).provideSome[Blocking](_.add(dslCtx))
     }
-    val dsLayer: ULayer[DataSrc] = ZLayer.succeed(ds)
-    t.provideLayer(dsLayer)
-  }
 
-  val managed = ZManaged.make(acquireDslContext)(releaseDslContext)
+  def runQuery(dataSource: JDataSource, qry: String) = {
+    val prg = managed
+      .use { dslCtx =>
+        query(qry).provideSome[Blocking](_.add(dslCtx))
+      }
+      .provideSome[Blocking](_.add(dataSource))
+      .provideLayer(Blocking.live)
 
-}
-
-object Test {
-
-  import java.sql.{Connection => JConnection}
-
-  import javax.sql.{DataSource => JDataSource}
-
-  type Connection = Has[JConnection]
-  type DataSource = Has[JDataSource]
-
-  val openConn: ZIO[Blocking with DataSource, Throwable, JConnection] = for {
-    ds   <- ZIO.access[DataSource](_.get)
-    conn <- effectBlocking(ds.getConnection)
-  } yield {
-    conn
-  }
-
-  def closeConn(conn: JConnection) = effectBlocking(conn.close()).orDie // TODO: commit errors should propagate
-
-  val managed: ZManaged[Blocking with DataSource, Throwable, JConnection] = ZManaged.make(openConn)(closeConn)
-
-  // some effect that uses a connection
-  val useConn: ZIO[Blocking with Connection, Throwable, Unit] = ???
-
-  // some effect that uses a data source and includes an effect that uses a connection
-  val useDataSource: ZIO[Blocking with DataSource, Throwable, Unit] = managed.use { conn =>
-    useConn.provideSome(_.add(conn)) // ZIO[Blocking, Throwable, Unit]
+    zio.Runtime.default.unsafeRun(prg)
   }
 
 }
