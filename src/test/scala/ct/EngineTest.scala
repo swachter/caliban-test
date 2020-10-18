@@ -2,7 +2,7 @@ package ct
 
 import java.util.UUID
 
-import ct.Engine.{Director, Genre, Movie}
+import ct.Engine.{Actor, Director, Genre, Movie}
 import ct.sql.Tables
 import liquibase.database.jvm.JdbcConnection
 import liquibase.resource.ClassLoaderResourceAccessor
@@ -29,6 +29,11 @@ class EngineTest extends AnyFunSuite {
   }
 
   test("init db") {
+
+    //
+    // setup database
+    //
+
     val conn = h2DataSourcee.getConnection
 
     val jdbcConn = new JdbcConnection(conn)
@@ -36,6 +41,10 @@ class EngineTest extends AnyFunSuite {
     val liquibase = new Liquibase("database.xml", new ClassLoaderResourceAccessor(), jdbcConn)
 
     liquibase.update(new Contexts(), new LabelExpression())
+
+    //
+    // generate test data
+    //
 
     val ctx = DSL.using(conn)
 
@@ -47,46 +56,64 @@ class EngineTest extends AnyFunSuite {
 
     insert(ctx, Tables.GENRE, genres)
 
-    val movies = for (i <- 0 until 40) yield Movie(UUID.randomUUID(), s"movie $i", directors(i % directors.size).id, 1980 + i % 7, genres(i % genres.size).id)
+    val movies = for (i <- 0 until 40)
+      yield Movie(UUID.randomUUID(), s"movie $i", directors(i % directors.size).id, 1980 + i % 7, genres(i % genres.size).id)
 
     insert(ctx, Tables.MOVIE, movies)
+
+    val actors = for (i <- 0 until 20) yield Actor(UUID.randomUUID(), s"actor $i")
+
+    insert(ctx, Tables.ACTOR, actors)
+
+    case class MovieActor(movieId: UUID, actorId: UUID)
+
+    val movieActors = for {
+      m <- 0 until movies.size
+      a <- m until m + 3
+    } yield MovieActor(movies(m).id, actors(a % actors.size).id)
+
+    insert(ctx, Tables.MOVIE_ACTOR, movieActors)
 
     conn.commit()
 
     conn.close()
 
+    //
+    // execute query
+    //
+
     val runtime = zio.Runtime.default
 
-    val qry =
-      """
-        |{
-        |  directors {
-        |    id
-        |    name
-        |    movies
-        |  }
-        |}
-        |""".stripMargin
-
+    // fails --  ValidationError Error: Field 'name' does not exist on type 'ListMovieView'.
 //    val qry =
 //      """
-//        |{
+//        | query {
 //        |  movies {
 //        |    name
-//        |    genre {
-//        |      name
-//        |    }
 //        |  }
 //        |}
 //        |""".stripMargin
 
-    val z = Engine.program(h2DataSourcee, qry)
+    // succeeds
+    val qry =
+      """
+        |query {
+        |   directors {
+        |     name
+        |     movies {
+        |       name
+        |     }
+        |   }
+        |}
+        |""".stripMargin
+
+
+    val z = Engine.program2(h2DataSourcee, qry)
 
     val result = runtime.unsafeRun(z)
 
     println(result.toString)
 
   }
-
 
 }

@@ -23,7 +23,6 @@ object Engine {
   case class Director(id: UUID, name: String)
   case class Genre(id: UUID, name: String)
   case class Actor(id: UUID, name: String)
-  case class Pet(id: UUID, name: String, actorId: UUID)
 
   type DslCtx  = Has[DSLContext]
   type LoadEnv = Blocking with DslCtx
@@ -33,8 +32,9 @@ object Engine {
                        name: String,
                        director: Load[DirectorView],
                        year: Int,
-                       genre: Load[GenreView] /*,  actors: Load[List[Actor]] */ ) {
-    def this(m: Movie) = this(m.id, m.name, directorLoader(m.id), m.year, genreLoader(m.genreId))
+                       genre: Load[GenreView],
+                       actors: Load[List[ActorView]]) {
+    def this(d: Movie) = this(d.id, d.name, directorLoader(d.id), d.year, genreLoader(d.genreId), actorsByMovieLoader(d.id))
   }
 
   case class DirectorView(id: UUID, name: String, movies: Load[List[MovieView]]) {
@@ -45,8 +45,9 @@ object Engine {
     def this(d: Genre) = this(d.id, d.name, moviesLoader(MovieArgs(genre = Some(d.id))))
   }
 
-//  case class ActorView(id: UUID, name: String, pets: Load[List[Pet]])
-//  case class PetView(id: UUID, name: String, owner: Load[ActorView])
+  case class ActorView(id: UUID, name: String, movies: Load[List[MovieView]]) {
+    def this(d: Actor) = this(d.id, d.name, moviesByActorLoader(d.id))
+  }
 
   //
   //
@@ -91,6 +92,10 @@ object Engine {
     override val condition: Option[Condition] = name.map(x => GENRE.NAME.like(s"%$x%"))
   }
 
+  case class ActorArgs(name: Option[String]) extends Args {
+    override val condition: Option[Condition] = name.map(x => ACTOR.NAME.like(s"%$x%"))
+  }
+
   case class Queries(
       movies: MovieArgs => Load[List[MovieView]],
       movie: UUID => Load[MovieView],
@@ -98,6 +103,8 @@ object Engine {
       director: UUID => Load[DirectorView],
       genres: GenreArgs => Load[List[GenreView]],
       genre: UUID => Load[GenreView],
+      actors: ActorArgs => Load[List[ActorView]],
+      actor: UUID => Load[ActorView],
   )
 
   //
@@ -161,7 +168,42 @@ object Engine {
   def directorLoader(id: UUID): Load[DirectorView]                  = classOf[Director].byIdLoader(DIRECTOR, id)(_.ID)(new DirectorView(_))
 
   def genresLoader(args: GenreArgs): Load[List[GenreView]] = classOf[Genre].byArgsLoader(GENRE, args)(new GenreView(_))
-  def genreLoader(id: UUID): Load[GenreView]                  = classOf[Genre].byIdLoader(GENRE, id)(_.ID)(new GenreView(_))
+  def genreLoader(id: UUID): Load[GenreView]               = classOf[Genre].byIdLoader(GENRE, id)(_.ID)(new GenreView(_))
+
+  def actorsLoader(args: ActorArgs): Load[List[ActorView]] = classOf[Actor].byArgsLoader(ACTOR, args)(new ActorView(_))
+  def actorLoader(id: UUID): Load[ActorView]               = classOf[Actor].byIdLoader(ACTOR, id)(_.ID)(new ActorView(_))
+
+  def moviesByActorLoader(id: UUID): Load[List[MovieView]] =
+    for {
+      ctx <- dslCtx
+      res <- effectBlocking {
+              ctx
+                .select(MOVIE.asterisk())
+                .from(MOVIE)
+                .innerJoin(MOVIE_ACTOR)
+                .on(MOVIE_ACTOR.ACTOR_ID.eq(id))
+                .fetchInto(classOf[Movie])
+                .asScala
+                .map(new MovieView(_))
+                .toList
+            }
+    } yield res
+
+  def actorsByMovieLoader(id: UUID): Load[List[ActorView]] =
+    for {
+      ctx <- dslCtx
+      res <- effectBlocking {
+        ctx
+          .select(ACTOR.asterisk())
+          .from(ACTOR)
+          .innerJoin(MOVIE_ACTOR)
+          .on(MOVIE_ACTOR.MOVIE_ID.eq(id))
+          .fetchInto(classOf[Actor])
+          .asScala
+          .map(new ActorView(_))
+          .toList
+      }
+    } yield res
 
   val queries = Queries(
     moviesLoader,
@@ -169,7 +211,9 @@ object Engine {
     directorsLoader,
     directorLoader,
     genresLoader,
-    genreLoader
+    genreLoader,
+    actorsLoader,
+    actorLoader,
   )
 
   //
@@ -235,12 +279,12 @@ object Engine {
 
   def program2(ds: DataSource, qry: String): ZIO[Any, Throwable, ResponseValue] = {
     val t = managed.use { dslCtx =>
-      val q                                           = query(qry)
+      val q           = query(qry)
       val dslCtxLayer = ZLayer.succeed(dslCtx)
       q.provideLayer(dslCtxLayer ++ Blocking.live)
 
     }
-    val dsLayer: ULayer[DataSrc]                    = ZLayer.succeed(ds)
+    val dsLayer: ULayer[DataSrc] = ZLayer.succeed(ds)
     t.provideLayer(dsLayer)
   }
 
@@ -258,7 +302,7 @@ object Test {
   type DataSource = Has[JDataSource]
 
   val openConn: ZIO[Blocking with DataSource, Throwable, JConnection] = for {
-    ds <- ZIO.access[DataSource](_.get)
+    ds   <- ZIO.access[DataSource](_.get)
     conn <- effectBlocking(ds.getConnection)
   } yield {
     conn
@@ -273,7 +317,6 @@ object Test {
 
   // some effect that uses a data source and includes an effect that uses a connection
   val useDataSource: ZIO[Blocking with DataSource, Throwable, Unit] = managed.use { conn =>
-
     useConn.provideSome(_.add(conn)) // ZIO[Blocking, Throwable, Unit]
   }
 
