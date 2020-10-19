@@ -34,7 +34,7 @@ object Engine {
                        year: Int,
                        genre: Load[GenreView],
                        actors: Load[List[ActorView]]) {
-    def this(d: Movie) = this(d.id, d.name, directorLoader(d.id), d.year, genreLoader(d.genreId), actorsByMovieLoader(d.id))
+    def this(d: Movie) = this(d.id, d.name, directorLoader(d.directorId), d.year, genreLoader(d.genreId), actorsByMovieLoader(d.id))
   }
 
   case class DirectorView(id: UUID, name: String, movies: Load[List[MovieView]]) {
@@ -173,7 +173,7 @@ object Engine {
   def actorsLoader(args: ActorArgs): Load[List[ActorView]] = classOf[Actor].byArgsLoader(ACTOR, args)(new ActorView(_))
   def actorLoader(id: UUID): Load[ActorView]               = classOf[Actor].byIdLoader(ACTOR, id)(_.ID)(new ActorView(_))
 
-  def moviesByActorLoader(id: UUID): Load[List[MovieView]] =
+  def moviesByActorLoader(actorIdd: UUID): Load[List[MovieView]] =
     for {
       ctx <- dslCtx
       res <- effectBlocking {
@@ -181,7 +181,7 @@ object Engine {
                 .select(MOVIE.asterisk())
                 .from(MOVIE)
                 .innerJoin(MOVIE_ACTOR)
-                .on(MOVIE_ACTOR.ACTOR_ID.eq(id))
+                .on(MOVIE_ACTOR.ACTOR_ID.eq(actorIdd))
                 .fetchInto(classOf[Movie])
                 .asScala
                 .map(new MovieView(_))
@@ -189,7 +189,7 @@ object Engine {
             }
     } yield res
 
-  def actorsByMovieLoader(id: UUID): Load[List[ActorView]] =
+  def actorsByMovieLoader(movieId: UUID): Load[List[ActorView]] =
     for {
       ctx <- dslCtx
       res <- effectBlocking {
@@ -197,7 +197,7 @@ object Engine {
                 .select(ACTOR.asterisk())
                 .from(ACTOR)
                 .innerJoin(MOVIE_ACTOR)
-                .on(MOVIE_ACTOR.MOVIE_ID.eq(id))
+                .on(MOVIE_ACTOR.MOVIE_ID.eq(movieId))
                 .fetchInto(classOf[Actor])
                 .asScala
                 .map(new ActorView(_))
@@ -231,6 +231,21 @@ object Engine {
 
   object schema extends GenericSchema[LoadEnv]
   import schema._
+
+  // the query
+  //
+  // query {
+  //   movies {
+  //     name
+  //   }
+  // }
+  //
+  // fails with "ValidationError Error: Field 'name' does not exist on type 'ListMovieView'."
+  //
+  // Adding the following line solved the issue
+  // (cf. https://discord.com/channels/629491597070827530/633200096393166868/767454716170076171)
+  implicit val movieSchema = gen[MovieView]
+  implicit val actorSchema = gen[ActorView]
 
   //
   //
@@ -269,11 +284,6 @@ object Engine {
   def releaseDslContext(dslCtx: DSLContext): ZIO[Blocking, Nothing, Unit] = effectBlocking(dslCtx.close()).orDie
 
   val managed: ZManaged[Blocking with DataSource, Throwable, DSLContext] = ZManaged.make(acquireDslContext)(releaseDslContext)
-
-  def program(qry: String): ZIO[Blocking with DataSource, Throwable, ResponseValue] =
-    managed.use { dslCtx =>
-      query(qry).provideSome[Blocking](_.add(dslCtx))
-    }
 
   def runQuery(dataSource: JDataSource, qry: String) = {
     val prg = managed

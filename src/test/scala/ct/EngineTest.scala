@@ -79,38 +79,83 @@ class EngineTest extends AnyFunSuite {
     conn.close()
 
     //
-    // execute query
+    // execute queries
     //
 
-    val runtime = zio.Runtime.default
+    def runQuery(qry: String): Unit = {
+      val result = Engine.runQuery(h2DataSource, qry)
+      println("#" * 10)
+      println(qry)
+      println(result.toString)
+    }
 
-    // fails --  ValidationError Error: Field 'name' does not exist on type 'ListMovieView'.
-    val qry =
+    /*
+    runQuery(
       """
         | query {
         |  movies {
         |    name
+        |    year
+        |    actors {
+        |      name
+        |    }
+        |    genre {
+        |      name
+        |    }
         |  }
         |}
         |""".stripMargin
+    )
 
-    // succeeds
-//    val qry =
+    runQuery(
+      """
+        |query {
+        |   directors {
+        |     name
+        |     movies {
+        |       name
+        |       year
+        |     }
+        |   }
+        |}
+        |""".stripMargin
+    )
+*/
+
+    runQuery(
+      """
+        |query {
+        |  actors {
+        |    name
+        |    movies {
+        |      name
+        |      genre {
+        |        name
+        |      }
+        |    }
+        |  }
+        |}
+        |""".stripMargin
+    )
+
+//    runQuery(
 //      """
 //        |query {
-//        |   directors {
-//        |     name
-//        |     movies {
-//        |       name
-//        |     }
-//        |   }
+//        |  actors {
+//        |    name
+//        |    movies {
+//        |      name
+//        |      genre {
+//        |        name
+//        |      }
+//        |      director {
+//        |        name
+//        |      }
+//        |    }
+//        |  }
 //        |}
 //        |""".stripMargin
-
-
-    val result = Engine.runQuery(h2DataSource, qry)
-
-    println(result.toString)
+//    )
 
   }
 
