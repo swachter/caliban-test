@@ -2,7 +2,7 @@ package ct
 
 import java.util.UUID
 
-import ct.Engine.{Actor, Director, Genre, Movie}
+import caliban.ResponseValue
 import ct.sql.Tables
 import liquibase.database.jvm.JdbcConnection
 import liquibase.resource.ClassLoaderResourceAccessor
@@ -11,6 +11,8 @@ import org.h2.jdbcx.JdbcDataSource
 import org.jooq.impl.DSL
 import org.jooq.{DSLContext, Record, Table}
 import org.scalatest.funsuite.AnyFunSuite
+import zio.ZIO
+import zio.blocking.Blocking
 
 class EngineTest extends AnyFunSuite {
 
@@ -82,13 +84,6 @@ class EngineTest extends AnyFunSuite {
     // execute queries
     //
 
-    def runQuery(qry: String): Unit = {
-      val result = Engine.runQuery(h2DataSource, qry)
-      println("#" * 10)
-      println(qry)
-      println(result.toString)
-    }
-
     /*
     runQuery(
       """
@@ -120,7 +115,6 @@ class EngineTest extends AnyFunSuite {
         |}
         |""".stripMargin
     )
-*/
 
     runQuery(
       """
@@ -137,26 +131,63 @@ class EngineTest extends AnyFunSuite {
         |}
         |""".stripMargin
     )
+     */
 
-//    runQuery(
-//      """
-//        |query {
-//        |  actors {
-//        |    name
-//        |    movies {
-//        |      name
-//        |      genre {
-//        |        name
-//        |      }
-//        |      director {
-//        |        name
-//        |      }
-//        |    }
-//        |  }
-//        |}
-//        |""".stripMargin
-//    )
+    // this query can only be run by the optimizing engine
+    runQuery(
+      """
+        |query {
+        |  actors {
+        |    name
+        |    movies {
+        |      name
+        |      genre {
+        |        name
+        |      }
+        |      director {
+        |        name
+        |      }
+        |    }
+        |  }
+        |}
+        |""".stripMargin
+    )
 
+  }
+
+//  import Engine.interpreter
+  import OptimizingEngine.interpreter
+
+  def query(qry: String): ZIO[LoadEnv, Throwable, ResponseValue] = {
+    for {
+      resp <- interpreter.execute(qry)
+      r <- if (resp.errors.isEmpty) {
+            ZIO.succeed(resp.data)
+          } else {
+            ZIO.fail {
+              val t = new Throwable()
+              resp.errors.foreach(t.addSuppressed(_))
+              t
+            }
+          }
+    } yield {
+      r
+    }
+  }
+
+  def runQuery(qry: String) = {
+    val prg = managedDslContext
+      .use { dslCtx =>
+        query(qry).provideSome[Blocking](_.add(dslCtx))
+      }
+      .provideSome[Blocking](_.add(h2DataSource))
+      .provideLayer(Blocking.live)
+
+    val result = zio.Runtime.default.unsafeRun(prg)
+
+    println("#" * 10)
+    println(qry)
+    println(result.toString)
   }
 
 }

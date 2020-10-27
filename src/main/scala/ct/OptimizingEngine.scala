@@ -9,63 +9,71 @@ import caliban.Value.StringValue
 import caliban.schema.{ArgBuilder, Schema, _}
 import ct.sql.Tables._
 import zio.blocking._
+import zio.query.ZQuery
 
 import scala.jdk.CollectionConverters._
 import scala.util.Try
 
-object Engine {
+/**
+  * Optimizing GraphQL engine that uses ZQuery to batch/cache requests for entities by their id
+  */
+object OptimizingEngine {
 
   //
-  // define views of the database entities; relationships are represented as Load effects
+  // define views of the database entities; relationships are represented as Load or Query effects
   //
 
   case class MovieView(id: UUID,
                        name: String,
-                       director: Load[DirectorView],
+                       director: Query[DirectorView],
                        year: Int,
-                       genre: Load[GenreView],
-                       actors: Load[List[ActorView]]) {
+                       genre: Query[GenreView],
+                       actors: Load[List[ActorView]])
+      extends View {
     def this(d: Movie) = this(d.id, d.name, directorLoader(d.directorId), d.year, genreLoader(d.genreId), actorsByMovieLoader(d.id))
   }
 
-  case class DirectorView(id: UUID, name: String, movies: Load[List[MovieView]]) {
+  case class DirectorView(id: UUID, name: String, movies: Load[List[MovieView]]) extends View {
     def this(d: Director) = this(d.id, d.name, moviesLoader(MovieArgs(director = Some(d.id))))
   }
 
-  case class GenreView(id: UUID, name: String, movies: Load[List[MovieView]]) {
+  case class GenreView(id: UUID, name: String, movies: Load[List[MovieView]]) extends View {
     def this(d: Genre) = this(d.id, d.name, moviesLoader(MovieArgs(genre = Some(d.id))))
   }
 
-  case class ActorView(id: UUID, name: String, movies: Load[List[MovieView]]) {
+  case class ActorView(id: UUID, name: String, movies: Load[List[MovieView]]) extends View {
     def this(d: Actor) = this(d.id, d.name, moviesByActorLoader(d.id))
   }
 
-  case class Queries(
-      movies: MovieArgs => Load[List[MovieView]],
-      movie: UUID => Load[MovieView],
-      directors: DirectorArgs => Load[List[DirectorView]],
-      director: UUID => Load[DirectorView],
-      genres: GenreArgs => Load[List[GenreView]],
-      genre: UUID => Load[GenreView],
-      actors: ActorArgs => Load[List[ActorView]],
-      actor: UUID => Load[ActorView],
-  )
+  //
+  //
+  //
+
+  case class GetMovieById(id: UUID)    extends GetById[MovieView]
+  case class GetDirectorById(id: UUID) extends GetById[DirectorView]
+  case class GetGenreById(id: UUID)    extends GetById[GenreView]
+  case class GetActorById(id: UUID)    extends GetById[ActorView]
 
   //
   //
   //
+
+  val movieDataSource    = classOf[Movie].dataSource(MOVIE)(_.ID)(new MovieView(_))
+  val directorDataSource = classOf[Director].dataSource(DIRECTOR)(_.ID)(new DirectorView(_))
+  val genreDataSource    = classOf[Genre].dataSource(GENRE)(_.ID)(new GenreView(_))
+  val actorDataSource    = classOf[Actor].dataSource(ACTOR)(_.ID)(new ActorView(_))
 
   def moviesLoader(args: MovieArgs): Load[List[MovieView]] = classOf[Movie].byArgsLoader(MOVIE, args)(new MovieView(_))
-  def movieLoader(id: UUID): Load[MovieView]               = classOf[Movie].byIdLoader(MOVIE, id)(_.ID)(new MovieView(_))
+  def movieLoader(id: UUID): Query[MovieView]              = ZQuery.fromRequest(GetMovieById(id))(movieDataSource)
 
   def directorsLoader(args: DirectorArgs): Load[List[DirectorView]] = classOf[Director].byArgsLoader(DIRECTOR, args)(new DirectorView(_))
-  def directorLoader(id: UUID): Load[DirectorView]                  = classOf[Director].byIdLoader(DIRECTOR, id)(_.ID)(new DirectorView(_))
+  def directorLoader(id: UUID): Query[DirectorView]                 = ZQuery.fromRequest(GetDirectorById(id))(directorDataSource)
 
   def genresLoader(args: GenreArgs): Load[List[GenreView]] = classOf[Genre].byArgsLoader(GENRE, args)(new GenreView(_))
-  def genreLoader(id: UUID): Load[GenreView]               = classOf[Genre].byIdLoader(GENRE, id)(_.ID)(new GenreView(_))
+  def genreLoader(id: UUID): Query[GenreView]              = ZQuery.fromRequest(GetGenreById(id))(genreDataSource)
 
   def actorsLoader(args: ActorArgs): Load[List[ActorView]] = classOf[Actor].byArgsLoader(ACTOR, args)(new ActorView(_))
-  def actorLoader(id: UUID): Load[ActorView]               = classOf[Actor].byIdLoader(ACTOR, id)(_.ID)(new ActorView(_))
+  def actorLoader(id: UUID): Query[ActorView]              = ZQuery.fromRequest(GetActorById(id))(actorDataSource)
 
   def moviesByActorLoader(actorIdd: UUID): Load[List[MovieView]] =
     for {
@@ -98,6 +106,17 @@ object Engine {
                 .toList
             }
     } yield res
+
+  case class Queries(
+      movies: MovieArgs => Load[List[MovieView]],
+      movie: UUID => Query[MovieView],
+      directors: DirectorArgs => Load[List[DirectorView]],
+      director: UUID => Query[DirectorView],
+      genres: GenreArgs => Load[List[GenreView]],
+      genre: UUID => Query[GenreView],
+      actors: ActorArgs => Load[List[ActorView]],
+      actor: UUID => Query[ActorView],
+  )
 
   val queries = Queries(
     moviesLoader,
