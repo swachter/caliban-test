@@ -43,7 +43,7 @@ libraryDependencies += "org.liquibase" % "liquibase-core" % "3.10.3"
 val zioVersion = "1.0.3"
 
 libraryDependencies += "dev.zio" %% "zio" % zioVersion
-libraryDependencies += "com.github.ghostdogpr" %% "caliban" % "0.9.2"
+libraryDependencies += "com.github.ghostdogpr" %% "caliban" % "0.9.4"
 
 libraryDependencies += "com.h2database" % "h2" % "1.4.197" % Test
 libraryDependencies += "org.scalatest" %% "scalatest" % "3.1.0" % Test
