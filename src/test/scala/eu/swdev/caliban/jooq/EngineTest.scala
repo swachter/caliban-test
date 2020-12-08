@@ -1,8 +1,7 @@
-package ct
+package eu.swdev.caliban.jooq
 
 import java.util.UUID
 
-import caliban.ResponseValue
 import ct.sql.Tables
 import liquibase.database.jvm.JdbcConnection
 import liquibase.resource.ClassLoaderResourceAccessor
@@ -11,8 +10,6 @@ import org.h2.jdbcx.JdbcDataSource
 import org.jooq.impl.DSL
 import org.jooq.{DSLContext, Record, Table}
 import org.scalatest.funsuite.AnyFunSuite
-import zio.ZIO
-import zio.blocking.Blocking
 
 class EngineTest extends AnyFunSuite {
 
@@ -30,7 +27,12 @@ class EngineTest extends AnyFunSuite {
     data.foreach(insert(ctx, t, _))
   }
 
+  val graphQlEngine = GraphQlSetup.createEngine(h2DataSource)
+
   test("init db") {
+
+    println("API:")
+    println(graphQlEngine.render)
 
     //
     // setup database
@@ -50,20 +52,20 @@ class EngineTest extends AnyFunSuite {
 
     val ctx = DSL.using(conn)
 
-    val directors = for (i <- 0 until 10) yield Director(UUID.randomUUID(), s"director $i")
+    val directors = for (i <- 0 until 10) yield DirectorEntity(UUID.randomUUID(), s"director $i")
 
     insert(ctx, Tables.DIRECTOR, directors)
 
-    val genres = for (i <- 0 until 4) yield Genre(UUID.randomUUID(), s"genre $i")
+    val genres = for (i <- 0 until 4) yield GenreEntity(UUID.randomUUID(), s"genre $i")
 
     insert(ctx, Tables.GENRE, genres)
 
     val movies = for (i <- 0 until 40)
-      yield Movie(UUID.randomUUID(), s"movie $i", directors(i % directors.size).id, 1980 + i % 7, genres(i % genres.size).id)
+      yield MovieEntity(UUID.randomUUID(), s"movie $i", directors(i % directors.size).id, 1980 + i % 7, genres(i % genres.size).id)
 
     insert(ctx, Tables.MOVIE, movies)
 
-    val actors = for (i <- 0 until 20) yield Actor(UUID.randomUUID(), s"actor $i")
+    val actors = for (i <- 0 until 20) yield ActorEntity(UUID.randomUUID(), s"actor $i")
 
     insert(ctx, Tables.ACTOR, actors)
 
@@ -84,7 +86,15 @@ class EngineTest extends AnyFunSuite {
     // execute queries
     //
 
-    /*
+    runQuery(
+      """
+        | query {
+        |  movies {
+        |    name
+        |  }
+        |}
+        |""".stripMargin
+    )
     runQuery(
       """
         | query {
@@ -131,7 +141,6 @@ class EngineTest extends AnyFunSuite {
         |}
         |""".stripMargin
     )
-     */
 
     // this query can only be run by the optimizing engine
     runQuery(
@@ -155,39 +164,9 @@ class EngineTest extends AnyFunSuite {
 
   }
 
-//  import Engine.interpreter
-  import OptimizingEngine.interpreter
-
-  def query(qry: String): ZIO[LoadEnv, Throwable, ResponseValue] = {
-    for {
-      resp <- interpreter.execute(qry)
-      r <- if (resp.errors.isEmpty) {
-            ZIO.succeed(resp.data)
-          } else {
-            ZIO.fail {
-              val t = new Throwable()
-              resp.errors.foreach(t.addSuppressed(_))
-              t
-            }
-          }
-    } yield {
-      r
-    }
-  }
-
   def runQuery(qry: String) = {
-    val prg = managedDslContext
-      .use { dslCtx =>
-        query(qry).provideSome[Blocking](_.add(dslCtx))
-      }
-      .provideSome[Blocking](_.add(h2DataSource))
-      .provideLayer(Blocking.live)
-
-    val result = zio.Runtime.default.unsafeRun(prg)
-
-    println("#" * 10)
-    println(qry)
-    println(result.toString)
+    val result = graphQlEngine.evaluateQuery(qry, GraphQlSetup.RequestContext("abc"))
+    println(result)
   }
 
 }
